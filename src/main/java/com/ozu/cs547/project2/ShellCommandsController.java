@@ -36,8 +36,10 @@ public class ShellCommandsController {
             Optional<FileDescriptor> file = fileList.stream().filter(thisFile -> thisFile.getFileId() == fileId).findFirst();
             long fileSize = serverCommunicator.getFileSize(server1Ip, server1Port, fileId);
             System.out.format("File %d is %d bytes. Starting to download…\n", fileId, fileSize);
-            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize);
-            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize);
+            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 4);
+            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 4);
+            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 4);
+            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 4);
         } catch (IOException e) {
             e.printStackTrace();
         }
