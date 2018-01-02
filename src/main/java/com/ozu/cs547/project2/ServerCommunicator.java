@@ -14,10 +14,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -44,13 +41,16 @@ public class ServerCommunicator {
             DatagramSocket dsocket = new DatagramSocket();
             dsocket.setSoTimeout(1000);//default timeout value 1000 ms after first calculation it will be average rtt*3
             int counterVal = PACKET_COUNTER.getAndIncrement();
-            if (startTime == null) {
+            if (startTime == null || (startTime.getTime() + 2000) < (new Date()).getTime()) {
                 startTime = new Date();
             }
             boolean isDownloadCompleted = false;
+            int retryCounter = 0;
             while (counterVal * 1000 < fileSize) {
                 List<byte[]> content = null;
+                retryCounter = 0;
                 if ((counterVal + 1) * 1000 >= fileSize) {
+                    retryCounter++;
                     isDownloadCompleted = false;
                     while (!isDownloadCompleted) {
                         startTimeInMilis = System.currentTimeMillis();
@@ -66,9 +66,10 @@ public class ServerCommunicator {
                         }
                         currentThreadStats.setRequestCounter(currentThreadStats.getRequestCounter() + 1);
                         currentThreadStats.setTotalRtts(currentThreadStats.getTotalRtts() + (endTimeInMilis - startTimeInMilis));
-                        dsocket.setSoTimeout((int) (currentThreadStats.getTotalRtts() / currentThreadStats.getRequestCounter()) * 3);
+                        dsocket.setSoTimeout((int) ((currentThreadStats.getTotalRtts() / currentThreadStats.getRequestCounter()) * (Math.pow(2, retryCounter))) + 200);
                     }
                 } else {
+                    retryCounter++;
                     isDownloadCompleted = false;
                     while (!isDownloadCompleted) {
                         startTimeInMilis = System.currentTimeMillis();
@@ -83,7 +84,7 @@ public class ServerCommunicator {
                         }
                         currentThreadStats.setRequestCounter(currentThreadStats.getRequestCounter() + 1);
                         currentThreadStats.setTotalRtts(currentThreadStats.getTotalRtts() + (endTimeInMilis - startTimeInMilis));
-                        dsocket.setSoTimeout((int) (currentThreadStats.getTotalRtts() / currentThreadStats.getRequestCounter()) * 3);
+                        dsocket.setSoTimeout((int) ((currentThreadStats.getTotalRtts() / currentThreadStats.getRequestCounter()) * (Math.pow(2, retryCounter))) + 200);
                     }
                 }
                 fileContent.put(counterVal, content);
@@ -102,11 +103,14 @@ public class ServerCommunicator {
                     });
                 });
                 fos.close();
+
                 FINISHED_THREAD_COUNTER.set(0);
                 PACKET_COUNTER.set(0);
                 fileContent.clear();
                 threadStats.clear();
-                System.out.println("File " + fileId + " has been downloaded. The md5 hash is " + getFileMD5Checksum(fileName));
+                long totalTimeInMilis = (new Date()).getTime() - startTime.getTime();
+                System.out.println("File " + fileId + " has been downloaded.\n Total download time : " + totalTimeInMilis  +
+                        "msecs. The md5 hash is " + getFileMD5Checksum(fileName));
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -187,6 +191,11 @@ public class ServerCommunicator {
             }
         }
         return returnList;
+    }
+
+    @Async
+    public void statsPrinter() {
+
     }
 
     private String getFileMD5Checksum(String filename) {
