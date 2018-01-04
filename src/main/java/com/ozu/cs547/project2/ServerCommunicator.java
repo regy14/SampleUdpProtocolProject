@@ -3,6 +3,7 @@ package com.ozu.cs547.project2;
 import com.ozu.cs547.project2.model.*;
 import com.ozu.cs547.project2.utility.Util;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.util.DigestUtils;
 
@@ -28,6 +29,7 @@ public class ServerCommunicator {
     private AtomicInteger FINISHED_THREAD_COUNTER = new AtomicInteger(0);
     private ConcurrentMap<Integer, List<byte[]>> fileContent = new ConcurrentHashMap<>();
     private List<Stats> threadStats = new ArrayList<>();
+    private Long currentDownloadingFileSize = null;
 
     @Async
     public void readFileFromServer(String serverIp, int serverPort, int fileId, String fileName, long fileSize, int numberOfThreads) {
@@ -37,6 +39,12 @@ public class ServerCommunicator {
             currentThreadStats.setServerIp(serverIp);
             currentThreadStats.setServerPort(serverPort);
             currentThreadStats.setThreadNumber(THREAD_ENUMARATOR.getAndIncrement());
+            if (currentDownloadingFileSize == null) {
+                synchronized (this) {
+                    currentDownloadingFileSize = fileSize;
+                }
+            }
+
             threadStats.add(currentThreadStats);
             DatagramSocket dsocket = new DatagramSocket();
             dsocket.setSoTimeout(1000);//default timeout value 1000 ms after first calculation it will be average rtt*3
@@ -44,7 +52,7 @@ public class ServerCommunicator {
             if (startTime == null || (startTime.getTime() + 2000) < (new Date()).getTime()) {
                 startTime = new Date();
             }
-            boolean isDownloadCompleted = false;
+            boolean isDownloadCompleted;
             int retryCounter = 0;
             while (counterVal * 1000 < fileSize) {
                 List<byte[]> content = null;
@@ -66,7 +74,7 @@ public class ServerCommunicator {
                         }
                         currentThreadStats.setRequestCounter(currentThreadStats.getRequestCounter() + 1);
                         currentThreadStats.setTotalRtts(currentThreadStats.getTotalRtts() + (endTimeInMilis - startTimeInMilis));
-                        dsocket.setSoTimeout((int) ((currentThreadStats.getTotalRtts() / currentThreadStats.getRequestCounter()) * (Math.pow(2, retryCounter))) + 200);
+                        dsocket.setSoTimeout(calculateTimeout(currentThreadStats, retryCounter));
                     }
                 } else {
                     retryCounter++;
@@ -84,7 +92,7 @@ public class ServerCommunicator {
                         }
                         currentThreadStats.setRequestCounter(currentThreadStats.getRequestCounter() + 1);
                         currentThreadStats.setTotalRtts(currentThreadStats.getTotalRtts() + (endTimeInMilis - startTimeInMilis));
-                        dsocket.setSoTimeout((int) ((currentThreadStats.getTotalRtts() / currentThreadStats.getRequestCounter()) * (Math.pow(2, retryCounter))) + 200);
+                        dsocket.setSoTimeout(calculateTimeout(currentThreadStats, retryCounter));
                     }
                 }
                 fileContent.put(counterVal, content);
@@ -108,13 +116,22 @@ public class ServerCommunicator {
                 PACKET_COUNTER.set(0);
                 fileContent.clear();
                 threadStats.clear();
+                currentDownloadingFileSize = null;
                 long totalTimeInMilis = (new Date()).getTime() - startTime.getTime();
-                System.out.println("File " + fileId + " has been downloaded.\n Total download time : " + totalTimeInMilis  +
-                        "msecs. The md5 hash is " + getFileMD5Checksum(fileName));
+                System.out.println("File " + fileId + " has been downloaded.\n Total download time : " + totalTimeInMilis +
+                        " msecs. The md5 hash is " + getFileMD5Checksum(fileName));
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private int calculateTimeout(Stats currentThreadStats, int retryCounter) {
+        int timeout = (int) ((currentThreadStats.getTotalRtts() / currentThreadStats.getRequestCounter()) * (Math.pow(2, retryCounter)));
+        if (timeout < 100) {
+            timeout += 100;
+        }
+        return timeout;
     }
 
     public List<FileDescriptor> getFileList(String ip, int port) throws IOException {
@@ -193,9 +210,48 @@ public class ServerCommunicator {
         return returnList;
     }
 
-    @Async
+    @Scheduled(fixedRate = 3000)
     public void statsPrinter() {
+        if (threadStats != null && !threadStats.isEmpty()) {
+            Map<String, Integer> serversDownloadedBytes = new HashMap<>();
+            Map<String, Float> serversAverageRtts = new HashMap<>();
+            Map<String, Float> serversPacketLossRates = new HashMap<>();
+            Long totalElapsedTimeAsMs = Calendar.getInstance().getTime().getTime() - startTime.getTime();
+            threadStats.stream().forEach(stat -> {
+                //total downloaded byte count for each server
+                String key = stat.getServerIp() + ":" + stat.getServerPort();
+                int downloadedByteCounter = serversDownloadedBytes.get(key) == null ? 0 : serversDownloadedBytes.get(key);
+                downloadedByteCounter += stat.getDownloadedByteCount();
+                serversDownloadedBytes.put(key, downloadedByteCounter);
+                //Averge RTT calculation for each server
+                float averageRtt = serversAverageRtts.get(key) == null ? 0 : serversAverageRtts.get(key);
+                try {
+                    averageRtt += stat.getTotalRtts() / stat.getRequestCounter();
+                } catch (ArithmeticException e) {
+                    //recently started divison by zero exception
+                }
+                serversAverageRtts.put(key, averageRtt);
 
+                //Package Loss Rates
+                Float packageLossRate = serversPacketLossRates.get(key) == null ? 0F : serversPacketLossRates.get(key);
+                try {
+                    packageLossRate += (float) stat.getLossCount() / stat.getRequestCounter();
+                } catch (ArithmeticException e) {
+                    //recently started divison by zero exception
+                }
+                serversPacketLossRates.put(key, packageLossRate);
+            });
+            float percentage = (float) serversDownloadedBytes.values().stream().mapToLong(l -> l).sum() / currentDownloadingFileSize;
+            System.out.printf("Currently elapsed time : %d ms. Total download percentage : %.2f \n", totalElapsedTimeAsMs, percentage);
+            serversDownloadedBytes.keySet().stream().forEach(key -> {
+                System.out.println("=============================== Server " + key + " Current Stats : ===============================");
+                System.out.printf("Total Downloaded Bytes : %d bytes \n", serversDownloadedBytes.get(key));
+                System.out.printf("Transfer speed : %.2f  byte/sec \n", ((float) serversDownloadedBytes.get(key) / ((float) totalElapsedTimeAsMs / 1000)));
+                System.out.printf("Average Rtt : %.2f ms\n", serversAverageRtts.get(key));
+                System.out.printf("Package Loss Rate : %.2f \n", serversPacketLossRates.get(key));
+                System.out.println("###################################################################################################\n\n");
+            });
+        }
     }
 
     private String getFileMD5Checksum(String filename) {

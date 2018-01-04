@@ -1,6 +1,7 @@
 package com.ozu.cs547.project2;
 
 import com.ozu.cs547.project2.model.FileDescriptor;
+import com.ozu.cs547.project2.model.InetAddressInterface;
 import com.sun.security.ntlm.Server;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.shell.standard.ShellComponent;
@@ -8,9 +9,10 @@ import org.springframework.shell.standard.ShellMethod;
 import org.springframework.shell.standard.ShellOption;
 
 import java.io.IOException;
-import java.util.List;
-import java.util.Optional;
-import java.util.Scanner;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.*;
 
 @ShellComponent
 public class ShellCommandsController {
@@ -19,7 +21,7 @@ public class ShellCommandsController {
     ServerCommunicator serverCommunicator;
 
     @ShellMethod("FTP client creater")
-    private void mytest(@ShellOption String firstIpPort, String secondIpPort) {
+    private void createclient(@ShellOption String firstIpPort, String secondIpPort) {
         Scanner scanner = new Scanner(System.in);
         String tokens[] = firstIpPort.split(":");
         String server1Ip = tokens[0];
@@ -36,10 +38,16 @@ public class ShellCommandsController {
             Optional<FileDescriptor> file = fileList.stream().filter(thisFile -> thisFile.getFileId() == fileId).findFirst();
             long fileSize = serverCommunicator.getFileSize(server1Ip, server1Port, fileId);
             System.out.format("File %d is %d bytes. Starting to download…\n", fileId, fileSize);
-            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 4);
-            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 4);
-            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 4);
-            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 4);
+
+            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 8);
+            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 8);
+            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 8);
+            serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 8);
+            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 8);
+            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 8);
+            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 8);
+            serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 8);
+
         } catch (IOException e) {
             e.printStackTrace();
         }
