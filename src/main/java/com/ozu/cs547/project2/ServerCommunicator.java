@@ -13,27 +13,30 @@ import java.io.InputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 public class ServerCommunicator {
 
     private Date startTime = null;
-    private AtomicInteger PACKET_COUNTER = new AtomicInteger(0);
+    private AtomicLong PACKET_COUNTER = new AtomicLong(0);
     private AtomicInteger THREAD_ENUMARATOR = new AtomicInteger(1);
     private AtomicInteger FINISHED_THREAD_COUNTER = new AtomicInteger(0);
-    private ConcurrentMap<Integer, List<byte[]>> fileContent = new ConcurrentHashMap<>();
+    private ConcurrentMap<Long, List<byte[]>> fileContent = new ConcurrentHashMap<>();
     private List<Stats> threadStats = new ArrayList<>();
     private Long currentDownloadingFileSize = null;
 
     @Async
-    public void readFileFromServer(String serverIp, int serverPort, int fileId, String fileName, long fileSize, int numberOfThreads) {
+    public void readFileFromServer(String serverIp, int serverPort, int fileId, String fileName, long fileSize, int numberOfThreads, InetAddressInterface inetAddr) {
         try {
+            int readByteSize = 20480;
             Long startTimeInMilis, endTimeInMilis;
             Stats currentThreadStats = new Stats();
             currentThreadStats.setServerIp(serverIp);
@@ -46,29 +49,34 @@ public class ServerCommunicator {
             }
 
             threadStats.add(currentThreadStats);
-            DatagramSocket dsocket = new DatagramSocket();
+            DatagramSocket dsocket;
+            if (inetAddr != null) {
+                dsocket = new DatagramSocket(new InetSocketAddress(inetAddr.getNetworkInterface().getInetAddresses().nextElement(), 0));
+            } else {
+                dsocket = new DatagramSocket();
+            }
             dsocket.setSoTimeout(1000);//default timeout value 1000 ms after first calculation it will be average rtt*3
-            int counterVal = PACKET_COUNTER.getAndIncrement();
+            long counterVal = PACKET_COUNTER.getAndIncrement();
             if (startTime == null || (startTime.getTime() + 2000) < (new Date()).getTime()) {
                 startTime = new Date();
             }
             boolean isDownloadCompleted;
             int retryCounter = 0;
-            while (counterVal * 1000 < fileSize) {
+            while (counterVal * readByteSize < fileSize) {
                 List<byte[]> content = null;
                 retryCounter = 0;
-                if ((counterVal + 1) * 1000 >= fileSize) {
-                    retryCounter++;
+                if ((counterVal + 1) * readByteSize >= fileSize) {
                     isDownloadCompleted = false;
                     while (!isDownloadCompleted) {
+                        retryCounter++;
                         startTimeInMilis = System.currentTimeMillis();
-                        content = getFileData(serverIp, serverPort, fileId, (counterVal * 1000) + 1, fileSize,
+                        content = getFileData(serverIp, serverPort, fileId, (counterVal * readByteSize) + 1, fileSize,
                                 dsocket, currentThreadStats);
                         endTimeInMilis = System.currentTimeMillis();
-                        if (content.stream().map(x -> x.length).mapToInt(i -> i).sum() == (fileSize - (counterVal * 1000))) {
+                        if (content.stream().map(x -> x.length).mapToInt(i -> i).sum() == (fileSize - (counterVal * readByteSize))) {
                             isDownloadCompleted = true;
                             currentThreadStats.setDownloadedByteCount(currentThreadStats.getDownloadedByteCount() +
-                                    (fileSize - (counterVal * 1000)));
+                                    (fileSize - (counterVal * readByteSize)));
                         } else {
                             currentThreadStats.setLossCount(currentThreadStats.getLossCount() + 1);
                         }
@@ -77,16 +85,16 @@ public class ServerCommunicator {
                         dsocket.setSoTimeout(calculateTimeout(currentThreadStats, retryCounter));
                     }
                 } else {
-                    retryCounter++;
                     isDownloadCompleted = false;
                     while (!isDownloadCompleted) {
+                        retryCounter++;
                         startTimeInMilis = System.currentTimeMillis();
-                        content = getFileData(serverIp, serverPort, fileId, (counterVal * 1000) + 1,
-                                (counterVal + 1) * 1000, dsocket, currentThreadStats);
+                        content = getFileData(serverIp, serverPort, fileId, (counterVal * readByteSize) + 1,
+                                (counterVal + 1) * readByteSize, dsocket, currentThreadStats);
                         endTimeInMilis = System.currentTimeMillis();
-                        if (content.stream().map(x -> x.length).mapToInt(i -> i).sum() == 1000) {
+                        if (content.stream().map(x -> x.length).mapToInt(i -> i).sum() == readByteSize) {
                             isDownloadCompleted = true;
-                            currentThreadStats.setDownloadedByteCount(currentThreadStats.getDownloadedByteCount() + 1000);
+                            currentThreadStats.setDownloadedByteCount(currentThreadStats.getDownloadedByteCount() + readByteSize);
                         } else {
                             currentThreadStats.setLossCount(currentThreadStats.getLossCount() + 1);
                         }
@@ -128,19 +136,24 @@ public class ServerCommunicator {
 
     private int calculateTimeout(Stats currentThreadStats, int retryCounter) {
         int timeout = (int) ((currentThreadStats.getTotalRtts() / currentThreadStats.getRequestCounter()) * (Math.pow(2, retryCounter)));
-        if (timeout < 100) {
-            timeout += 100;
+        if (timeout > 3000) {
+            timeout = 3000;
         }
         return timeout;
     }
 
-    public List<FileDescriptor> getFileList(String ip, int port) throws IOException {
+    public List<FileDescriptor> getFileList(String ip, int port, InetAddressInterface inetAddr) throws IOException {
         List<String> fileNames = new ArrayList<>();
         InetAddress IPAddress = InetAddress.getByName(ip);
         RequestType req = new RequestType(RequestType.REQUEST_TYPES.GET_FILE_LIST, 0, 0, 0, null);
         byte[] sendData = Util.toByteArray(req.getData(), req.getRequestType(), req.getFileId(), req.getStartByte(), req.getEndByte());
         DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, port);
-        DatagramSocket dsocket = new DatagramSocket();
+        DatagramSocket dsocket;
+        if (inetAddr != null) {
+            dsocket = new DatagramSocket(new InetSocketAddress(inetAddr.getNetworkInterface().getInetAddresses().nextElement(), 0));
+        } else {
+            dsocket = new DatagramSocket();
+        }
         dsocket.setSoTimeout(1000);
         dsocket.send(sendPacket);
         byte[] receiveData = new byte[ResponseType.MAX_RESPONSE_SIZE];
@@ -157,6 +170,7 @@ public class ServerCommunicator {
         byte[] sendData = Util.toByteArray(req.getData(), req.getRequestType(), req.getFileId(), req.getStartByte(), req.getEndByte());
         DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, port);
         DatagramSocket dsocket = new DatagramSocket();
+        dsocket.setSoTimeout(1000);
         dsocket.send(sendPacket);
         byte[] receiveData = new byte[ResponseType.MAX_RESPONSE_SIZE];
         DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
@@ -196,10 +210,12 @@ public class ServerCommunicator {
                 dsocket.receive(receivePacket);
             } catch (Exception e) {
                 //timeout or packet loss occured break loop
+                returnList.clear();
                 break;
             }
             FileDataResponseType response = new FileDataResponseType(receivePacket.getData());
             if (response.getResponseType() != ResponseType.RESPONSE_TYPES.GET_FILE_DATA_SUCCESS) {
+                returnList.clear();
                 break;
             }
             if (response.getEndByte() > maxReceivedByte) {
@@ -214,8 +230,9 @@ public class ServerCommunicator {
     public void statsPrinter() {
         if (threadStats != null && !threadStats.isEmpty()) {
             Map<String, Integer> serversDownloadedBytes = new HashMap<>();
-            Map<String, Float> serversAverageRtts = new HashMap<>();
-            Map<String, Float> serversPacketLossRates = new HashMap<>();
+            Map<String, Float> serversTotalRtts = new HashMap<>();
+            Map<String, Long> serversPacketLossCount = new HashMap<>();
+            Map<String, Long> serversRequestCount = new HashMap<>();
             Long totalElapsedTimeAsMs = Calendar.getInstance().getTime().getTime() - startTime.getTime();
             threadStats.stream().forEach(stat -> {
                 //total downloaded byte count for each server
@@ -224,22 +241,27 @@ public class ServerCommunicator {
                 downloadedByteCounter += stat.getDownloadedByteCount();
                 serversDownloadedBytes.put(key, downloadedByteCounter);
                 //Averge RTT calculation for each server
-                float averageRtt = serversAverageRtts.get(key) == null ? 0 : serversAverageRtts.get(key);
+                float totalRtt = serversTotalRtts.get(key) == null ? 0 : serversTotalRtts.get(key);
                 try {
-                    averageRtt += stat.getTotalRtts() / stat.getRequestCounter();
+                    totalRtt += stat.getTotalRtts();
                 } catch (ArithmeticException e) {
                     //recently started divison by zero exception
                 }
-                serversAverageRtts.put(key, averageRtt);
+                serversTotalRtts.put(key, totalRtt);
 
-                //Package Loss Rates
-                Float packageLossRate = serversPacketLossRates.get(key) == null ? 0F : serversPacketLossRates.get(key);
+                //Package Loss Counts
+                Long packageLossCount = serversPacketLossCount.get(key) == null ? 0L : serversPacketLossCount.get(key);
                 try {
-                    packageLossRate += (float) stat.getLossCount() / stat.getRequestCounter();
+                    packageLossCount += stat.getLossCount();
                 } catch (ArithmeticException e) {
                     //recently started divison by zero exception
                 }
-                serversPacketLossRates.put(key, packageLossRate);
+                serversPacketLossCount.put(key, packageLossCount);
+
+                //Servers total request counts
+                Long requestCount = serversRequestCount.get(key) == null ? 0L : serversRequestCount.get(key);
+                requestCount += stat.getRequestCounter();
+                serversRequestCount.put(key, requestCount);
             });
             float percentage = (float) serversDownloadedBytes.values().stream().mapToLong(l -> l).sum() / currentDownloadingFileSize;
             System.out.printf("Currently elapsed time : %d ms. Total download percentage : %.2f \n", totalElapsedTimeAsMs, percentage);
@@ -247,8 +269,8 @@ public class ServerCommunicator {
                 System.out.println("=============================== Server " + key + " Current Stats : ===============================");
                 System.out.printf("Total Downloaded Bytes : %d bytes \n", serversDownloadedBytes.get(key));
                 System.out.printf("Transfer speed : %.2f  byte/sec \n", ((float) serversDownloadedBytes.get(key) / ((float) totalElapsedTimeAsMs / 1000)));
-                System.out.printf("Average Rtt : %.2f ms\n", serversAverageRtts.get(key));
-                System.out.printf("Package Loss Rate : %.2f \n", serversPacketLossRates.get(key));
+                System.out.printf("Average Rtt : %.2f ms\n", ((float) serversTotalRtts.get(key) / serversRequestCount.get(key)));
+                System.out.printf("Package Loss Rate : %.2f \n", ((float) serversPacketLossCount.get(key) / serversRequestCount.get(key)));
                 System.out.println("###################################################################################################\n\n");
             });
         }
