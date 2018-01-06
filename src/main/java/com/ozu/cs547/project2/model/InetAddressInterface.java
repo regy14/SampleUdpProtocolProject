@@ -12,7 +12,7 @@ public class InetAddressInterface {
 		this.addr=addr;
 	}
 	
-	public NetworkInterface getNetqorkInterface() {
+	public NetworkInterface getNetworkInterface() {
 		return net_if;
 	}
 
