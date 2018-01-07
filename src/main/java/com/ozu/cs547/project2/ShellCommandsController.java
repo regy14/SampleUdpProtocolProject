@@ -43,10 +43,14 @@ public class ShellCommandsController {
             long fileSize = serverCommunicator.getFileSize(server1Ip, server1Port, fileId);
             System.out.format("File %d is %d bytes. Starting to download…\n", fileId, fileSize);
             accessableInterfaces.stream().forEach(inetAddr -> {
-                serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 4 * accessableInterfaces.size(), inetAddr);
-                serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 4 * accessableInterfaces.size(), inetAddr);
-                serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 4 * accessableInterfaces.size(), inetAddr);
-                serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 4 * accessableInterfaces.size(), inetAddr);
+                serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 8 * accessableInterfaces.size(), inetAddr);
+                serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 8 * accessableInterfaces.size(), inetAddr);
+                serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 8 * accessableInterfaces.size(), inetAddr);
+                serverCommunicator.readFileFromServer(server1Ip, server1Port, fileId, file.get().getFileName(), fileSize, 8 * accessableInterfaces.size(), inetAddr);
+                serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 8 * accessableInterfaces.size(), inetAddr);
+                serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 8 * accessableInterfaces.size(), inetAddr);
+                serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 8 * accessableInterfaces.size(), inetAddr);
+                serverCommunicator.readFileFromServer(server2Ip, server2Port, fileId, file.get().getFileName(), fileSize, 8 * accessableInterfaces.size(), inetAddr);
             });
 
         } catch (IOException e) {
