@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -30,13 +31,17 @@ public class ServerCommunicator {
     private AtomicInteger THREAD_ENUMARATOR = new AtomicInteger(1);
     private AtomicInteger FINISHED_THREAD_COUNTER = new AtomicInteger(0);
     private ConcurrentMap<Long, List<byte[]>> fileContent = new ConcurrentHashMap<>();
+    private ConcurrentLinkedQueue<Long> needHelpBytes = new ConcurrentLinkedQueue<>();
     private List<Stats> threadStats = new ArrayList<>();
     private Long currentDownloadingFileSize = null;
 
     @Async
     public void readFileFromServer(String serverIp, int serverPort, int fileId, String fileName, long fileSize, int numberOfThreads, InetAddressInterface inetAddr) {
         try {
-            int readByteSize = 20480;
+            int readByteSize = 10000;
+            if (fileSize > 10000000) {
+                readByteSize = 50000;
+            }
             Long startTimeInMilis, endTimeInMilis;
             Stats currentThreadStats = new Stats();
             currentThreadStats.setServerIp(serverIp);
@@ -77,7 +82,15 @@ public class ServerCommunicator {
                             isDownloadCompleted = true;
                             currentThreadStats.setDownloadedByteCount(currentThreadStats.getDownloadedByteCount() +
                                     (fileSize - (counterVal * readByteSize)));
+                            fileContent.put(counterVal, content);
                         } else {
+                            if (needHelpBytes.contains(counterVal) == false) {
+                                if (fileContent.get(counterVal) != null) {
+                                    isDownloadCompleted = true; //Another thread downloaded bytes
+                                } else {
+                                    needHelpBytes.add(counterVal);
+                                }
+                            }
                             currentThreadStats.setLossCount(currentThreadStats.getLossCount() + 1);
                         }
                         currentThreadStats.setRequestCounter(currentThreadStats.getRequestCounter() + 1);
@@ -95,7 +108,15 @@ public class ServerCommunicator {
                         if (content.stream().map(x -> x.length).mapToInt(i -> i).sum() == readByteSize) {
                             isDownloadCompleted = true;
                             currentThreadStats.setDownloadedByteCount(currentThreadStats.getDownloadedByteCount() + readByteSize);
+                            fileContent.put(counterVal, content);
                         } else {
+                            if (needHelpBytes.contains(counterVal) == false) {
+                                if (fileContent.get(counterVal) != null) {
+                                    isDownloadCompleted = true; //Another thread downloaded bytes
+                                } else {
+                                    needHelpBytes.add(counterVal);
+                                }
+                            }
                             currentThreadStats.setLossCount(currentThreadStats.getLossCount() + 1);
                         }
                         currentThreadStats.setRequestCounter(currentThreadStats.getRequestCounter() + 1);
@@ -103,8 +124,16 @@ public class ServerCommunicator {
                         dsocket.setSoTimeout(calculateTimeout(currentThreadStats, retryCounter));
                     }
                 }
-                fileContent.put(counterVal, content);
-                counterVal = PACKET_COUNTER.getAndIncrement();
+                if (!needHelpBytes.isEmpty()) {
+                    try {
+                        counterVal = needHelpBytes.poll();
+                    } catch (Exception e) {
+                        //another thread removed from queue
+                        counterVal = PACKET_COUNTER.getAndIncrement();
+                    }
+                } else {
+                    counterVal = PACKET_COUNTER.getAndIncrement();
+                }
             }
             if (FINISHED_THREAD_COUNTER.incrementAndGet() == numberOfThreads) {
                 //write file content
