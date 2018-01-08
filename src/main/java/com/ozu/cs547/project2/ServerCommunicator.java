@@ -39,8 +39,12 @@ public class ServerCommunicator {
     public void readFileFromServer(String serverIp, int serverPort, int fileId, String fileName, long fileSize, int numberOfThreads, InetAddressInterface inetAddr) {
         try {
             int readByteSize = 10000;
-            if (fileSize > 10000000) {
+            if (fileSize > 10000000L) {
                 readByteSize = 50000;
+            } else if (fileSize < 1000L) {
+                readByteSize = (int) fileSize;
+            } else if (fileSize < 10000L) {
+                readByteSize = 1000;
             }
             Long startTimeInMilis, endTimeInMilis;
             Stats currentThreadStats = new Stats();
@@ -67,7 +71,7 @@ public class ServerCommunicator {
             }
             boolean isDownloadCompleted;
             int retryCounter = 0;
-            while (counterVal * readByteSize < fileSize) {
+            while ((counterVal * readByteSize < fileSize) && !isAllPacketsDownloaded(readByteSize, fileSize)) {
                 List<byte[]> content = null;
                 retryCounter = 0;
                 if ((counterVal + 1) * readByteSize >= fileSize) {
@@ -160,6 +164,15 @@ public class ServerCommunicator {
             }
         } catch (IOException e) {
             e.printStackTrace();
+        }
+    }
+
+    private boolean isAllPacketsDownloaded(int readByteSize, long fileSize) {
+        Long totalPacketNumber = new Double(Math.floor((float) fileSize / readByteSize)).longValue();
+        if (fileContent.size() >= totalPacketNumber) {
+            return true;
+        } else {
+            return false;
         }
     }
 
@@ -293,6 +306,7 @@ public class ServerCommunicator {
                 serversRequestCount.put(key, requestCount);
             });
             float percentage = (float) serversDownloadedBytes.values().stream().mapToLong(l -> l).sum() / currentDownloadingFileSize;
+            percentage = percentage > 1.0f ? 1.0f : percentage;//floating pointteki kaymalardan dolayı oluşabilen 1.01 gibi sonuçları engellemek için
             System.out.printf("Currently elapsed time : %d ms. Total download percentage : %.2f \n", totalElapsedTimeAsMs, percentage);
             serversDownloadedBytes.keySet().stream().forEach(key -> {
                 System.out.println("=============================== Server " + key + " Current Stats : ===============================");
